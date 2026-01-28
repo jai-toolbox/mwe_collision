@@ -120,7 +120,7 @@ main :: () {
 
     my_window = create_window(window_width, window_height, "mwe_model_loading");
     Simp.set_render_target(my_window);
-    toggle_fullscreen(my_window, true, null);
+    // toggle_fullscreen(my_window, true, null);
 
     shader_program_handle, success := create_shader_program(VERTEX_SHADER_WITH_CAMERA_AND_PER_OBJECT_TRANSFORMS, VERTEX_COLOR_FRAGMENT_SHADER);
 	if !success
@@ -244,6 +244,7 @@ main :: () {
             ground_state : Ground_State = ifx on_ground then .ON_GROUND else .IN_AIR;
 
             velocity = get_new_first_person_velocity(velocity, fpmi, get_forward(*camera), delta_time, ground_state, Movement_Params.{});
+            log("vel: %", velocity);
         }
 
         camera.position += velocity * delta_time;
