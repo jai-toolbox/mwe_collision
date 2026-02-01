@@ -232,7 +232,7 @@ main :: () {
             }
         }
 
-        if is_key_down(xx #char "M")
+        if is_key_just_pressed(xx #char "M")
             toggle_menu(*windowed_program_3d);
     
         for Input.get_window_resizes() {
