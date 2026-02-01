@@ -1,11 +1,11 @@
-#import "model_loading";
-#import "geometry";
-#import "opengl";
-#import "camera";
-#import "movement";
-#import "collision";
-#import "tbx_math";
-#import "tbx_engine";
+#import "tbx/model_loading";
+#import "tbx/geometry";
+#import "tbx/opengl";
+#import "tbx/camera";
+#import "tbx/movement";
+#import "tbx/collision";
+#import "tbx/math";
+#import "tbx/engine";
 
 #import "Basic";
 #import "GL";

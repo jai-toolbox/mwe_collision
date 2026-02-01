@@ -40,7 +40,7 @@ OUTPUT_EXECUTABLE_NAME := "mwe_model_loading";
 
     import_path: [..] string;
     array_add(*import_path, ..options.import_path);
-    array_add(*import_path, "src/tbx/");
+    array_add(*import_path, "src/");
     options.import_path = import_path;
 
     set_build_options(options, w);
