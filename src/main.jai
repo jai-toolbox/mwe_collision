@@ -136,6 +136,7 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     Simp.update_window (windowed_program_3d.window);
     Simp.clear_render_target(.15, .08, .08, 1);
 
+
     glDepthMask (GL_TRUE);
     glEnable (GL_DEPTH_TEST);
 
@@ -143,7 +144,11 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
 
     render(*windowed_program_3d.per_object_transform_renderer);
 
-    Simp.swap_buffers(windowed_program_3d.window);
+    context.simp.current_shader = null;
+    render_tick_stats(windowed_program_3d);
+
+    // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
+    swap_buffers(windowed_program_3d.window, false);
 }
 
 
@@ -212,11 +217,10 @@ main :: () {
         count += 1;
     }
 
-	delta_time := 0.01667;
     quit := false;
     while !windowed_program_3d.end_program {
 
-        frame_start := current_time_monotonic ();
+        mark_frame_start(*windowed_program_3d);
 
         Input.update_window_events();
         for Input.events_this_frame {
@@ -245,20 +249,20 @@ main :: () {
             }
         }
 
-        per_frame_update(*windowed_program_3d, delta_time);
+        per_frame_update(*windowed_program_3d);
 
         if (windowed_program_3d.current_menu == .NONE) {
-            do_collision_simulation(*windowed_program_3d, delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
+            do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
         } else {
             context.simp.current_shader = null;
             clear_render_target(.35, .35, .35, 1);
             render_menus(*windowed_program_3d.wp);
-            swap_buffers(windowed_program_3d.window);
+            // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
+            swap_buffers(windowed_program_3d.window, false);
         }
 
-		frame_end := current_time_monotonic();
-		delta_time = cast (float) to_float64_seconds(frame_end - frame_start);
-
+        sleep_to_maintain_max_fps(*windowed_program_3d);
+        mark_frame_end(*windowed_program_3d);
     }
 
 }
