@@ -12,6 +12,8 @@
 #import "Random";
 #import "Math";
 #import "Window_Creation";
+#import "GetRect";
+#import "Simp";
 
 convert_obj_to_indexed_meshes :: (obj_data: *Obj_Data) -> [..] Indexed_Mesh {
     meshes: [..] Indexed_Mesh;
@@ -80,7 +82,68 @@ Character :: struct {
     using r : Renderable;
 }
 
-do_collision_simulation() {
+do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_time : float, velocity : *Vector3, on_ground : *bool,  character : *Character, map : [] Collision_Geometry, renderables: [] Renderable, movement_mode: Movement_Mode) {
+    // this moves the character to the camera's position
+    windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(windowed_program_3d.camera.position);
+
+    // this is the character.
+    queue_render(*windowed_program_3d.per_object_transform_renderer, character.render_object_index);
+    for renderables queue_render(*windowed_program_3d.per_object_transform_renderer, it.render_object_index);
+
+    row_major := GL_TRUE;
+    num_matrices_we_are_updating :u32 = 1;
+
+    if (movement_mode == .GOD) {
+        gmi := God_Mode_Input.{
+            is_key_down (xx #char "E"),
+            is_key_down (xx #char "Q"),
+            is_key_down (xx #char "W"),
+            is_key_down (xx #char "S"),
+            is_key_down (xx #char "D"),
+            is_key_down (xx #char "A"),
+            is_key_down (xx #char "V"),
+            is_key_down (Input.Key_Code.SHIFT),
+        }; 
+
+
+        velocity.* = get_new_god_mode_velocity(velocity.*, get_forward(*windowed_program_3d.camera), gmi, delta_time);
+    } 
+    if (movement_mode == .FPS) {
+        fpmi := First_Person_Movement_Input.{
+            is_key_down (xx #char "W"),
+            is_key_down (xx #char "S"),
+            is_key_down (xx #char "D"),
+            is_key_down (xx #char "A"),
+            is_key_down (xx #char "V"),
+        }; 
+
+        ground_state : Ground_State = ifx on_ground.* then .ON_GROUND else .IN_AIR;
+
+        velocity.* = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{});
+        // log("on_ground: %", on_ground.*);
+        // log("delta_time: %", delta_time);
+        // log("vel: %", velocity.*);
+    }
+
+    windowed_program_3d.camera.position += velocity.* * delta_time;
+
+    // the camera matrices are "one update behind" but it doesn't matter too much here.
+
+    resolve_collisions_against_body(map, character, *windowed_program_3d.camera.position, velocity, on_ground);
+
+    glUseProgram(windowed_program_3d.per_object_transform_renderer.shader_program_gl_handle);
+
+    Simp.update_window (windowed_program_3d.window);
+    Simp.clear_render_target(.15, .08, .08, 1);
+
+    glDepthMask (GL_TRUE);
+    glEnable (GL_DEPTH_TEST);
+
+    glClear (GL_DEPTH_BUFFER_BIT);
+
+    render(*windowed_program_3d.per_object_transform_renderer);
+
+    Simp.swap_buffers(windowed_program_3d.window);
 }
 
 
@@ -89,12 +152,12 @@ main :: () {
     windowed_program_3d : Windowed_Program_3D;
     windowed_program_3d.movement_mode = .MANUAL;
     windowed_program_3d.camera_mode = .THIRD_PERSON;
-    windowed_program_3d.window_width = 1920;
-    windowed_program_3d.window_height = 1080;
+    windowed_program_3d.window_width = 1280;
+    windowed_program_3d.window_height = 720;
     windowed_program_3d.window_name = "mwe_collision";
 
     init(*windowed_program_3d);
-    enable_fullscreen(*windowed_program_3d);
+    // enable_fullscreen(*windowed_program_3d);
 
 
     obj_data := load_obj("data/basic_map.obj");
@@ -105,7 +168,7 @@ main :: () {
 
     movement_mode := Movement_Mode.FPS;
 
-    hide_cursor();
+    // hide_cursor();
 
     for meshes {
         cg : Collision_Geometry;
@@ -151,13 +214,15 @@ main :: () {
 
 	delta_time := 0.01667;
     quit := false;
-    while !quit {
+    while !windowed_program_3d.end_program {
 
         frame_start := current_time_monotonic ();
 
         Input.update_window_events();
         for Input.events_this_frame {
             if it.type == .QUIT then quit = true;
+
+            getrect_handle_event(it);
 
             if it.type == {
               case .KEYBOARD;
@@ -166,6 +231,9 @@ main :: () {
                 }
             }
         }
+
+        if is_key_down(xx #char "M")
+            toggle_menu(*windowed_program_3d);
     
         for Input.get_window_resizes() {
             Simp.update_window(it.window);  
@@ -179,72 +247,18 @@ main :: () {
 
         per_frame_update(*windowed_program_3d, delta_time);
 
-        // this moves the character to the camera's position
-        windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(windowed_program_3d.camera.position);
-
-        // this is the character.
-        queue_render(*windowed_program_3d.per_object_transform_renderer, character.render_object_index);
-
-        for renderables queue_render(*windowed_program_3d.per_object_transform_renderer, it.render_object_index);
-
-        row_major := GL_TRUE;
-        num_matrices_we_are_updating :u32 = 1;
-
-        if (movement_mode == .GOD) {
-            gmi := God_Mode_Input.{
-                is_key_down (xx #char "E"),
-                is_key_down (xx #char "Q"),
-                is_key_down (xx #char "W"),
-                is_key_down (xx #char "S"),
-                is_key_down (xx #char "D"),
-                is_key_down (xx #char "A"),
-                is_key_down (xx #char "V"),
-                is_key_down (Input.Key_Code.SHIFT),
-            }; 
-
-
-            velocity = get_new_god_mode_velocity(velocity, get_forward(*windowed_program_3d.camera), gmi, delta_time);
-        } 
-        if (movement_mode == .FPS) {
-            fpmi := First_Person_Movement_Input.{
-                is_key_down (xx #char "W"),
-                is_key_down (xx #char "S"),
-                is_key_down (xx #char "D"),
-                is_key_down (xx #char "A"),
-                is_key_down (xx #char "V"),
-            }; 
-
-            ground_state : Ground_State = ifx on_ground then .ON_GROUND else .IN_AIR;
-
-            velocity = get_new_first_person_velocity(velocity, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{});
-            // log("vel: %", velocity);
+        if (windowed_program_3d.current_menu == .NONE) {
+            do_collision_simulation(*windowed_program_3d, delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
+        } else {
+            context.simp.current_shader = null;
+            clear_render_target(.35, .35, .35, 1);
+            render_menus(*windowed_program_3d.wp);
+            swap_buffers(windowed_program_3d.window);
         }
 
-        windowed_program_3d.camera.position += velocity * delta_time;
-
-        // the camera matrices are "one update behind" but it doesn't matter too much here.
-
-        resolve_collisions_against_body(map, character, *windowed_program_3d.camera.position, *velocity, *on_ground);
-
-        glUseProgram(windowed_program_3d.per_object_transform_renderer.shader_program_gl_handle);
-
-		Simp.update_window (windowed_program_3d.window);
-        Simp.clear_render_target(.15, .08, .08, 1);
-
-		glDepthMask (GL_TRUE);
-		glEnable (GL_DEPTH_TEST);
-
-		glClear (GL_DEPTH_BUFFER_BIT);
-
-        render(*windowed_program_3d.per_object_transform_renderer);
-
-        Simp.swap_buffers(windowed_program_3d.window);
-
-		frame_end := current_time_monotonic ();
-		delta_time = cast (float) to_float64_seconds (frame_end - frame_start);
+		frame_end := current_time_monotonic();
+		delta_time = cast (float) to_float64_seconds(frame_end - frame_start);
 
     }
-
-
 
 }
