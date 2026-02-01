@@ -4,21 +4,14 @@
 #import "camera";
 #import "movement";
 #import "collision";
-#import "math";
+#import "tbx_math";
+#import "tbx_engine";
 
 #import "Basic";
 #import "GL";
 #import "Random";
 #import "Math";
 #import "Window_Creation";
-
-Simp  :: #import "Simp";
-Input :: #import "Input";
-
-window_width  : s32 = 500;
-window_height : s32 = 500;
-
-my_window: Window_Type;
 
 convert_obj_to_indexed_meshes :: (obj_data: *Obj_Data) -> [..] Indexed_Mesh {
     meshes: [..] Indexed_Mesh;
@@ -82,22 +75,28 @@ Renderable :: struct {
     render_object_index : u32;
 };
 
-
-is_key_down :: inline (key : Input.Key_Code) -> bool #must {
-	return (Input.input_button_states[cast (s64) key] & .DOWN) != 0;
-}
-
 Character :: struct {
     using #as cg : Collision_Geometry;
     using r : Renderable;
 }
 
-Movement_Mode :: enum {
-    GOD;
-    FPS;
+do_collision_simulation() {
 }
 
+
 main :: () {
+
+    windowed_program_3d : Windowed_Program_3D;
+    windowed_program_3d.movement_mode = .MANUAL;
+    windowed_program_3d.camera_mode = .THIRD_PERSON;
+    windowed_program_3d.window_width = 1920;
+    windowed_program_3d.window_height = 1080;
+    windowed_program_3d.window_name = "mwe_collision";
+
+    init(*windowed_program_3d);
+    enable_fullscreen(*windowed_program_3d);
+
+
     obj_data := load_obj("data/basic_map.obj");
     // just assuming that meshes live till the end of the program for now.
     meshes := convert_obj_to_indexed_meshes(*obj_data);
@@ -106,6 +105,7 @@ main :: () {
 
     movement_mode := Movement_Mode.FPS;
 
+    hide_cursor();
 
     for meshes {
         cg : Collision_Geometry;
@@ -117,24 +117,6 @@ main :: () {
         array_add(*map, cg);
     }
 
-
-    my_window = create_window(window_width, window_height, "mwe_model_loading");
-    Simp.set_render_target(my_window);
-    // toggle_fullscreen(my_window, true, null);
-
-    shader_program_handle, success := create_shader_program(VERTEX_SHADER_WITH_CAMERA_AND_PER_OBJECT_TRANSFORMS, VERTEX_COLOR_FRAGMENT_SHADER);
-	if !success
-        log("shader compilation failed");
-		// return false;
-    if success 
-        log("shader compilation succeeded");
-
-
-    per_object_transform_renderer : Per_Object_Transform_Renderer;
-    per_object_transform_renderer.shader_program_gl_handle = shader_program_handle;
-    init(*per_object_transform_renderer);
-
-
     character : Character;
     character.indexed_triangle_positions = generate_box(ZERO3, 0.4, 1.75, 0.4); 
     character.aabb = create_aabb_from_positions(character.indexed_triangle_positions.positions);
@@ -144,11 +126,10 @@ main :: () {
     for 1..character.indexed_mesh.positions.count array_add(*character.indexed_mesh.rgb_colors, .{0, .5, .5});
     for 1..character.indexed_mesh.positions.count array_add(*character.local_to_world_indices, xx 0);
 
-    character.render_object_index = buffer_object(*per_object_transform_renderer, character.indexed_mesh.indices, character.local_to_world_indices, character.indexed_mesh.positions, character.indexed_mesh.rgb_colors);
+    character.render_object_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, character.indexed_mesh.indices, character.local_to_world_indices, character.indexed_mesh.positions, character.indexed_mesh.rgb_colors);
 
 
-    camera : Camera;
-    camera.position = Y3 * 30;
+    windowed_program_3d.camera.position = Y3 * 30;
     velocity : Vector3;
     on_ground : bool;
 
@@ -161,7 +142,7 @@ main :: () {
         
         for 1..renderable.indexed_mesh.positions.count array_add(*renderable.local_to_world_indices, xx count);
 
-        renderable.render_object_index = buffer_object(*per_object_transform_renderer, renderable.indexed_mesh.indices, renderable.local_to_world_indices, renderable.indexed_mesh.positions, renderable.indexed_mesh.rgb_colors);
+        renderable.render_object_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, renderable.indexed_mesh.indices, renderable.local_to_world_indices, renderable.indexed_mesh.positions, renderable.indexed_mesh.rgb_colors);
 
         array_add(*renderables, renderable);
 
@@ -185,34 +166,26 @@ main :: () {
                 }
             }
         }
-
     
         for Input.get_window_resizes() {
             Simp.update_window(it.window);  
-            if it.window == my_window {
-                should_reinit := (it.width != window_width) || (it.height != window_height);
+            if it.window == windowed_program_3d.window {
+                should_reinit := (it.width != windowed_program_3d.window_width) || (it.height != windowed_program_3d.window_height);
 
-                window_width  = it.width;
-                window_height = it.height;
+                windowed_program_3d.window_width  = it.width;
+                windowed_program_3d.window_height = it.height;
             }
         }
-    
-        
 
-        x, y, success := get_mouse_pointer_position(my_window, false); 
+        per_frame_update(*windowed_program_3d, delta_time);
 
-        update_angles(*camera, x, y);
-
-        vx, vy, vw, vh := get_dimensions (my_window, false);
-        // log("using: % %", vw, vh);
-        // update_matrices(*camera, vw, vh);
-        update_matrices_third_person(*camera, vw, vh);
-        per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(camera.position);
+        // this moves the character to the camera's position
+        windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(windowed_program_3d.camera.position);
 
         // this is the character.
-        queue_render(*per_object_transform_renderer, character.render_object_index);
+        queue_render(*windowed_program_3d.per_object_transform_renderer, character.render_object_index);
 
-        for renderables queue_render(*per_object_transform_renderer, it.render_object_index);
+        for renderables queue_render(*windowed_program_3d.per_object_transform_renderer, it.render_object_index);
 
         row_major := GL_TRUE;
         num_matrices_we_are_updating :u32 = 1;
@@ -230,7 +203,7 @@ main :: () {
             }; 
 
 
-            velocity = get_new_god_mode_velocity(velocity, get_forward(*camera), gmi, delta_time);
+            velocity = get_new_god_mode_velocity(velocity, get_forward(*windowed_program_3d.camera), gmi, delta_time);
         } 
         if (movement_mode == .FPS) {
             fpmi := First_Person_Movement_Input.{
@@ -243,20 +216,19 @@ main :: () {
 
             ground_state : Ground_State = ifx on_ground then .ON_GROUND else .IN_AIR;
 
-            velocity = get_new_first_person_velocity(velocity, fpmi, get_forward(*camera), delta_time, ground_state, Movement_Params.{});
-            log("vel: %", velocity);
+            velocity = get_new_first_person_velocity(velocity, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{});
+            // log("vel: %", velocity);
         }
 
-        camera.position += velocity * delta_time;
+        windowed_program_3d.camera.position += velocity * delta_time;
 
-        resolve_collisions_against_body(map, character, *camera.position, *velocity, *on_ground);
+        // the camera matrices are "one update behind" but it doesn't matter too much here.
 
-        glUseProgram(per_object_transform_renderer.shader_program_gl_handle);
+        resolve_collisions_against_body(map, character, *windowed_program_3d.camera.position, *velocity, *on_ground);
 
-        glUniformMatrix4fv(glGetUniformLocation(per_object_transform_renderer.shader_program_gl_handle, "world_to_camera"), num_matrices_we_are_updating, row_major, *camera.world_to_camera.coef[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(per_object_transform_renderer.shader_program_gl_handle, "camera_to_clip"), num_matrices_we_are_updating, row_major, *camera.camera_to_clip.coef[0][0]);
+        glUseProgram(windowed_program_3d.per_object_transform_renderer.shader_program_gl_handle);
 
-		Simp.update_window (my_window);
+		Simp.update_window (windowed_program_3d.window);
         Simp.clear_render_target(.15, .08, .08, 1);
 
 		glDepthMask (GL_TRUE);
@@ -264,10 +236,9 @@ main :: () {
 
 		glClear (GL_DEPTH_BUFFER_BIT);
 
-        render(*per_object_transform_renderer);
+        render(*windowed_program_3d.per_object_transform_renderer);
 
-        Simp.swap_buffers(my_window);
-
+        Simp.swap_buffers(windowed_program_3d.window);
 
 		frame_end := current_time_monotonic ();
 		delta_time = cast (float) to_float64_seconds (frame_end - frame_start);
