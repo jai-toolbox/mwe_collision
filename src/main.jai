@@ -9,11 +9,16 @@
 
 #import "Basic";
 #import "GL";
+#import "File";
 #import "Random";
 #import "Math";
 #import "Window_Creation";
 #import "GetRect";
-#import "Simp";
+
+Simp :: #import "Simp";
+using,except(Shader) Simp;
+
+Input :: #import "Input";
 
 convert_obj_to_indexed_meshes :: (obj_data: *Obj_Data) -> [..] Indexed_Mesh {
     meshes: [..] Indexed_Mesh;
@@ -73,7 +78,7 @@ convert_obj_to_indexed_meshes :: (obj_data: *Obj_Data) -> [..] Indexed_Mesh {
 
 Renderable :: struct {
     indexed_mesh : Indexed_Mesh;
-    local_to_world_indices : [..] u32;
+    local_to_world_index : u32;
     render_object_index : u32;
 };
 
@@ -82,12 +87,41 @@ Character :: struct {
     using r : Renderable;
 }
 
+update_player_ellipsoid_collision :: (position: *Vector3, velocity: *Vector3, on_ground: *bool, world_colliders: []Collision_Geometry, dt: float) {
+    // Player's collision ellipsoid (width, height, depth)
+    ellipsoid_radius := v3(0.4, 0.9, 0.4);  // Typical human-ish capsule
+    
+    // Frame gravity
+    // gravity := v3(0, -9.8 * dt, 0);
+    gravity := v3(0, 0, 0);
+    
+    // Frame velocity
+    frame_velocity := velocity.* * dt;
+    
+    resolve_collisions_against_body_ellipsoid(
+        world_colliders,
+        ellipsoid_radius,
+        position,
+        *frame_velocity,
+        gravity,
+        on_ground
+    );
+    
+    // Update stored velocity from frame velocity
+    velocity.* = frame_velocity / dt;
+    
+    // Jump logic
+    // if player.on_ground && input_jump_pressed() {
+    //     player.velocity.y = 5.0;
+    // }
+}
+
 do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_time : float, velocity : *Vector3, on_ground : *bool,  character : *Character, map : [] Collision_Geometry, renderables: [] Renderable, movement_mode: Movement_Mode) {
     // this moves the character to the camera's position
-    windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(windowed_program_3d.camera.position);
+    // windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[character_local_to_world_index] = make_translation_matrix4(windowed_program_3d.camera.position);
 
     // this is the character.
-    queue_render(*windowed_program_3d.per_object_transform_renderer, character.render_object_index);
+    // queue_render(*windowed_program_3d.per_object_transform_renderer, character.render_object_index);
     for renderables queue_render(*windowed_program_3d.per_object_transform_renderer, it.render_object_index);
 
     row_major := GL_TRUE;
@@ -119,17 +153,20 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
 
         ground_state : Ground_State = ifx on_ground.* then .ON_GROUND else .IN_AIR;
 
-        velocity.* = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{});
+        velocity.* = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{acceleration_mpss = 20});
         // log("on_ground: %", on_ground.*);
         // log("delta_time: %", delta_time);
         // log("vel: %", velocity.*);
     }
 
-    windowed_program_3d.camera.position += velocity.* * delta_time;
+    // windowed_program_3d.camera.position += velocity.* * delta_time;
 
     // the camera matrices are "one update behind" but it doesn't matter too much here.
 
-    resolve_collisions_against_body(map, character, *windowed_program_3d.camera.position, velocity, on_ground);
+    doing_ellipsoid := true;
+
+    // resolve_collisions_against_body_simple(map, character, *windowed_program_3d.camera.position, velocity, on_ground);
+    if doing_ellipsoid update_player_ellipsoid_collision(*windowed_program_3d.camera.position, velocity, on_ground, map, delta_time);
 
     glUseProgram(windowed_program_3d.per_object_transform_renderer.shader_program_gl_handle);
 
@@ -151,21 +188,21 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     swap_buffers(windowed_program_3d.window, false);
 }
 
-
-main :: () {
-
+run_mesh_based_collision_program :: () {
     windowed_program_3d : Windowed_Program_3D;
     windowed_program_3d.movement_mode = .MANUAL;
-    windowed_program_3d.camera_mode = .THIRD_PERSON;
+    windowed_program_3d.camera_mode = .FIRST_PERSON;
     windowed_program_3d.window_width = 1280;
     windowed_program_3d.window_height = 720;
     windowed_program_3d.window_name = "mwe_collision";
+
+    windowed_program_3d.camera.offset = Y3 * 1.75 * 0.5;
 
     init(*windowed_program_3d);
     // enable_fullscreen(*windowed_program_3d);
 
 
-    obj_data := load_obj("data/basic_map.obj");
+    obj_data := load_obj("data/lair.obj");
     // just assuming that meshes live till the end of the program for now.
     meshes := convert_obj_to_indexed_meshes(*obj_data);
 
@@ -192,12 +229,12 @@ main :: () {
     character.indexed_mesh.positions = character.indexed_triangle_positions.positions;
 
     for 1..character.indexed_mesh.positions.count array_add(*character.indexed_mesh.rgb_colors, .{0, .5, .5});
-    for 1..character.indexed_mesh.positions.count array_add(*character.local_to_world_indices, xx 0);
 
-    character.render_object_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, character.indexed_mesh.indices, character.local_to_world_indices, character.indexed_mesh.positions, character.indexed_mesh.rgb_colors);
+    character_local_to_world_index: u32;
+    character.render_object_index, character_local_to_world_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, character.indexed_mesh.indices, character.indexed_mesh.positions, character.indexed_mesh.rgb_colors);
 
 
-    windowed_program_3d.camera.position = Y3 * 30;
+    windowed_program_3d.camera.position = Y3 * 10;
     velocity : Vector3;
     on_ground : bool;
 
@@ -208,9 +245,7 @@ main :: () {
         renderable: Renderable;
         renderable.indexed_mesh = it;
         
-        for 1..renderable.indexed_mesh.positions.count array_add(*renderable.local_to_world_indices, xx count);
-
-        renderable.render_object_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, renderable.indexed_mesh.indices, renderable.local_to_world_indices, renderable.indexed_mesh.positions, renderable.indexed_mesh.rgb_colors);
+        renderable.render_object_index, renderable.local_to_world_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, renderable.indexed_mesh.indices, renderable.indexed_mesh.positions, renderable.indexed_mesh.rgb_colors);
 
         array_add(*renderables, renderable);
 
@@ -264,5 +299,205 @@ main :: () {
         sleep_to_maintain_max_fps(*windowed_program_3d);
         mark_frame_end(*windowed_program_3d);
     }
+}
 
+run_brush_based_collision_program :: () {
+    windowed_program_3d : Windowed_Program_3D;
+    windowed_program_3d.movement_mode = .MANUAL;
+    windowed_program_3d.camera_mode = .THIRD_PERSON;
+    windowed_program_3d.window_width = 1280;
+    windowed_program_3d.window_height = 720;
+    windowed_program_3d.window_name = "mwe_collision";
+
+    init(*windowed_program_3d);
+
+    // Load and parse the .map file instead of .obj
+    map_content, success_read := read_entire_file("data/lair.map");
+    if !success_read {
+        log_error("Failed to read map file");
+        return;
+    }
+    
+    map, success := parse_map(map_content, .Y_UP, 0.05);
+    if !success {
+        log_error("Failed to parse map file");
+        return;
+    }
+
+    // After parsing, print out the brush planes to verify normals
+    for * entity : map.entities {
+        for brush_idx : 0..entity.brushes.count-1 {
+            brush := *entity.brushes[brush_idx];
+            print("Brush %:\n", brush_idx);
+            for plane_idx : 0..brush.planes.count-1 {
+                plane := brush.planes[plane_idx];
+                print("  Plane %: normal=(%, %, %) d=%\n", 
+                      plane_idx, plane.normal.x, plane.normal.y, plane.normal.z, plane.d);
+            }
+        }
+    }
+
+    // Convert map brushes to renderable mesh
+    map_mesh := map_to_mesh_deduplicated(*map);
+
+    movement_mode := Movement_Mode.GOD;
+
+    // Create player using the new Player struct
+    player : Player;
+    player.position = .{ 0, 100, 0 };  // Start position (Y is up now, was {0, 0, 100})
+    player.velocity = .{ 0, 0, 0 };
+    player.radius = 0.2;   // Half of the old 0.4 width
+    player.height = 1.75;
+
+    // Create a visual representation for the player (cylinder approximated as box for now)
+    player_mesh := generate_box(ZERO3, player.radius * 2, player.height, player.radius * 2);
+    
+    player_indexed_mesh : Indexed_Mesh;
+    player_indexed_mesh.indices = player_mesh.indices;
+    player_indexed_mesh.positions = player_mesh.positions;
+    
+    player_local_to_world_indices : [..] u32;
+    for 1..player_indexed_mesh.positions.count {
+        array_add(*player_indexed_mesh.rgb_colors, .{random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()});
+    }
+
+    // player_render_object_index := buffer_object(
+    //     *windowed_program_3d.per_object_transform_renderer, 
+    //     player_indexed_mesh.indices, 
+    //     player_local_to_world_indices, 
+    //     player_indexed_mesh.positions, 
+    //     player_indexed_mesh.rgb_colors
+    // );
+
+    windowed_program_3d.camera.position = Y3 * 30;
+
+    // Create renderable for the map geometry
+    renderables : [..] Renderable;
+    
+    renderable: Renderable;
+    renderable.indexed_mesh.indices = map_mesh.indices;
+    renderable.indexed_mesh.positions = map_mesh.positions;
+    
+    // Generate colors for the map mesh
+    for 1..renderable.indexed_mesh.positions.count {
+        array_add(*renderable.indexed_mesh.rgb_colors, .{random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()});  // Gray color
+    }
+    
+    renderable.render_object_index, renderable.local_to_world_index = buffer_object(
+        *windowed_program_3d.per_object_transform_renderer, 
+        renderable.indexed_mesh.indices, 
+        renderable.indexed_mesh.positions, 
+        renderable.indexed_mesh.rgb_colors
+    );
+    
+    array_add(*renderables, renderable);
+
+    quit := false;
+    while !windowed_program_3d.end_program {
+
+        mark_frame_start(*windowed_program_3d);
+
+        Input.update_window_events();
+        for Input.events_this_frame {
+            if it.type == .QUIT then quit = true;
+
+            getrect_handle_event(it);
+
+            if it.type == {
+              case .KEYBOARD;
+                if it.key_pressed && it.key_code == .ESCAPE {
+                    quit = true;
+                }
+            }
+        }
+
+        if is_key_just_pressed(xx #char "M")
+            toggle_menu(*windowed_program_3d);
+    
+        for Input.get_window_resizes() {
+            Simp.update_window(it.window);  
+            if it.window == windowed_program_3d.window {
+                should_reinit := (it.width != windowed_program_3d.window_width) || (it.height != windowed_program_3d.window_height);
+
+                windowed_program_3d.window_width  = it.width;
+                windowed_program_3d.window_height = it.height;
+            }
+        }
+
+        per_frame_update(*windowed_program_3d);
+
+        if (windowed_program_3d.current_menu == .NONE) {
+
+
+            // Handle player input for movement - God Mode (free fly)
+            gmi := God_Mode_Input.{
+                is_key_down (xx #char "E"),
+                is_key_down (xx #char "Q"),
+                is_key_down (xx #char "W"),
+                is_key_down (xx #char "S"),
+                is_key_down (xx #char "D"),
+                is_key_down (xx #char "A"),
+                is_key_down (xx #char " "),
+                is_key_down (Input.Key_Code.SHIFT),
+            }; 
+
+            player.velocity = get_new_god_mode_velocity(player.velocity, get_forward(*windowed_program_3d.camera), gmi, windowed_program_3d.delta_time);
+            
+            // Update position directly (no gravity, no collision)
+            player.position += player.velocity * windowed_program_3d.delta_time;
+
+            if !is_key_down( xx #char "C") {
+                update_player(*player, *map, windowed_program_3d.delta_time);
+            }
+            
+            // Update player transform for rendering
+            player_transform := make_translation_matrix4(player.position);
+
+            // Offset down by half height since the box is centered
+            // player_transform._24 -= player.height / 2;
+            
+            // this moves the character to the camera's position
+            // windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[0] = make_translation_matrix4(player.position);
+
+            // queue_render(*windowed_program_3d.per_object_transform_renderer, player_render_object_index);
+            
+            
+            // Update camera to follow player (Y is up now)
+            windowed_program_3d.camera.position = player.position;
+            
+            // this is just the map dumb!
+            for renderables queue_render(*windowed_program_3d.per_object_transform_renderer, it.render_object_index);
+            
+            clear_render_target(.35, .35, .35, 1);  // Or whatever background color you want
+
+            glDepthMask (GL_TRUE);
+            glEnable (GL_DEPTH_TEST);
+
+            glClear (GL_DEPTH_BUFFER_BIT);
+
+            render(*windowed_program_3d.per_object_transform_renderer);
+
+            context.simp.current_shader = null;
+            render_tick_stats(windowed_program_3d);
+
+            // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
+            swap_buffers(windowed_program_3d.window, false);
+
+
+        } else {
+            context.simp.current_shader = null;
+            clear_render_target(.35, .35, .35, 1);
+            render_menus(*windowed_program_3d.wp);
+            swap_buffers(windowed_program_3d.window, false);
+        }
+
+        sleep_to_maintain_max_fps(*windowed_program_3d);
+        mark_frame_end(*windowed_program_3d);
+    }
+}
+
+main :: () {
+    run_mesh_based_collision_program();
+    // run_brush_based_collision_program();
+    // test();
 }
