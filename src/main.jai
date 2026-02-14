@@ -6,6 +6,7 @@
 #import "tbx/collision";
 #import "tbx/math";
 #import "tbx/engine";
+#import "tbx/physics";
 
 #import "Basic";
 #import "GL";
@@ -87,36 +88,7 @@ Character :: struct {
     using r : Renderable;
 }
 
-update_player_ellipsoid_collision :: (position: *Vector3, velocity: *Vector3, on_ground: *bool, world_colliders: []Collision_Geometry, dt: float) {
-    // Player's collision ellipsoid (width, height, depth)
-    ellipsoid_radius := v3(0.4, 0.9, 0.4);  // Typical human-ish capsule
-    
-    // Frame gravity
-    // gravity := v3(0, -9.8 * dt, 0);
-    gravity := v3(0, 0, 0);
-    
-    // Frame velocity
-    frame_velocity := velocity.* * dt;
-    
-    resolve_collisions_against_body_ellipsoid(
-        world_colliders,
-        ellipsoid_radius,
-        position,
-        *frame_velocity,
-        gravity,
-        on_ground
-    );
-    
-    // Update stored velocity from frame velocity
-    velocity.* = frame_velocity / dt;
-    
-    // Jump logic
-    // if player.on_ground && input_jump_pressed() {
-    //     player.velocity.y = 5.0;
-    // }
-}
-
-do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_time : float, velocity : *Vector3, on_ground : *bool,  character : *Character, map : [] Collision_Geometry, renderables: [] Renderable, movement_mode: Movement_Mode) {
+do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_time : float, velocity : *Vector3, on_ground : *bool,  character : *Character, map : Collision_Geometries, renderables: [] Renderable, movement_mode: Movement_Mode) {
     // this moves the character to the camera's position
     // windowed_program_3d.per_object_transform_renderer.local_to_world_matrices[character_local_to_world_index] = make_translation_matrix4(windowed_program_3d.camera.position);
 
@@ -135,44 +107,39 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
             is_key_down (xx #char "S"),
             is_key_down (xx #char "D"),
             is_key_down (xx #char "A"),
-            is_key_down (xx #char "V"),
+            is_key_down (xx #char " "),
             is_key_down (Input.Key_Code.SHIFT),
         }; 
 
-
         velocity.* = get_new_god_mode_velocity(velocity.*, get_forward(*windowed_program_3d.camera), gmi, delta_time);
     } 
+
+    old_velocity := velocity.*;
+    new_velocity : Vector3;
     if (movement_mode == .FPS) {
         fpmi := First_Person_Movement_Input.{
             is_key_down (xx #char "W"),
             is_key_down (xx #char "S"),
             is_key_down (xx #char "D"),
             is_key_down (xx #char "A"),
-            is_key_down (xx #char "V"),
+            is_key_down (xx #char " "),
         }; 
 
         ground_state : Ground_State = ifx on_ground.* then .ON_GROUND else .IN_AIR;
 
-        velocity.* = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{acceleration_mpss = 20});
-        // log("on_ground: %", on_ground.*);
-        // log("delta_time: %", delta_time);
-        // log("vel: %", velocity.*);
+        new_velocity = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{acceleration_mpss = 20});
     }
 
-    // windowed_program_3d.camera.position += velocity.* * delta_time;
+    ellipsoid_radius := v3(0.4, 1.75 / 2, 0.4);  
+    displacement := displacement_from_kinematic_update(old_velocity, new_velocity, delta_time);
+    resolve_collisions_against_body_ellipsoid(map, ellipsoid_radius, *windowed_program_3d.camera.position, *displacement, on_ground);
 
-    // the camera matrices are "one update behind" but it doesn't matter too much here.
-
-    doing_ellipsoid := true;
-
-    // resolve_collisions_against_body_simple(map, character, *windowed_program_3d.camera.position, velocity, on_ground);
-    if doing_ellipsoid update_player_ellipsoid_collision(*windowed_program_3d.camera.position, velocity, on_ground, map, delta_time);
+    velocity.* = new_velocity;
 
     glUseProgram(windowed_program_3d.per_object_transform_renderer.shader_program_gl_handle);
 
     Simp.update_window (windowed_program_3d.window);
     Simp.clear_render_target(.15, .08, .08, 1);
-
 
     glDepthMask (GL_TRUE);
     glEnable (GL_DEPTH_TEST);
@@ -183,8 +150,8 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
 
     context.simp.current_shader = null;
     render_tick_stats(windowed_program_3d);
+    render_camera_stats(windowed_program_3d);
 
-    // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
     swap_buffers(windowed_program_3d.window, false);
 }
 
@@ -192,38 +159,37 @@ run_mesh_based_collision_program :: () {
     windowed_program_3d : Windowed_Program_3D;
     windowed_program_3d.movement_mode = .MANUAL;
     windowed_program_3d.camera_mode = .FIRST_PERSON;
-    windowed_program_3d.window_width = 1280;
-    windowed_program_3d.window_height = 720;
+    windowed_program_3d.window_width = 1000;
+    windowed_program_3d.window_height = 1000;
     windowed_program_3d.window_name = "mwe_collision";
 
-    windowed_program_3d.camera.offset = Y3 * 1.75 * 0.5;
+    windowed_program_3d.camera.offset = Y3 * 1.75 * 0.25;
 
     init(*windowed_program_3d);
-    // enable_fullscreen(*windowed_program_3d);
-
 
     obj_data := load_obj("data/lair.obj");
+    // obj_data := load_obj("data/gravity_test.obj");
     // just assuming that meshes live till the end of the program for now.
     meshes := convert_obj_to_indexed_meshes(*obj_data);
 
-    map : [..] Collision_Geometry;
+    map : Collision_Geometries;
 
     movement_mode := Movement_Mode.FPS;
-
-    // hide_cursor();
 
     for meshes {
         cg : Collision_Geometry;
         cg.indexed_triangle_positions.indices = it.indices;
         cg.indexed_triangle_positions.positions = it.positions;
 
+
         cg.aabb = create_aabb_from_positions(cg.indexed_triangle_positions.positions);
 
-        array_add(*map, cg);
+        array_add(*map.indexed_triangle_positions,cg.indexed_triangle_positions);
+        array_add(*map.aabbs,cg.aabb);
     }
 
     character : Character;
-    character.indexed_triangle_positions = generate_box(ZERO3, 0.4, 1.75, 0.4); 
+    character.indexed_triangle_positions = create_box(ZERO3, 0.4, 1.75, 0.4); 
     character.aabb = create_aabb_from_positions(character.indexed_triangle_positions.positions);
     character.indexed_mesh.indices = character.indexed_triangle_positions.indices;
     character.indexed_mesh.positions = character.indexed_triangle_positions.positions;
@@ -233,8 +199,7 @@ run_mesh_based_collision_program :: () {
     character_local_to_world_index: u32;
     character.render_object_index, character_local_to_world_index = buffer_object(*windowed_program_3d.per_object_transform_renderer, character.indexed_mesh.indices, character.indexed_mesh.positions, character.indexed_mesh.rgb_colors);
 
-
-    windowed_program_3d.camera.position = Y3 * 10;
+    windowed_program_3d.camera.position = Y3 * 100;
     velocity : Vector3;
     on_ground : bool;
 
@@ -257,37 +222,14 @@ run_mesh_based_collision_program :: () {
 
         mark_frame_start(*windowed_program_3d);
 
-        Input.update_window_events();
-        for Input.events_this_frame {
-            if it.type == .QUIT then quit = true;
-
-            getrect_handle_event(it);
-
-            if it.type == {
-              case .KEYBOARD;
-                if it.key_pressed && it.key_code == .ESCAPE {
-                    quit = true;
-                }
-            }
-        }
-
         if is_key_just_pressed(xx #char "M")
             toggle_menu(*windowed_program_3d);
-    
-        for Input.get_window_resizes() {
-            Simp.update_window(it.window);  
-            if it.window == windowed_program_3d.window {
-                should_reinit := (it.width != windowed_program_3d.window_width) || (it.height != windowed_program_3d.window_height);
-
-                windowed_program_3d.window_width  = it.width;
-                windowed_program_3d.window_height = it.height;
-            }
-        }
 
         per_frame_update(*windowed_program_3d);
 
         if (windowed_program_3d.current_menu == .NONE) {
             do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
+            context.simp.current_shader = null; 
         } else {
             context.simp.current_shader = null;
             clear_render_target(.35, .35, .35, 1);
@@ -350,7 +292,7 @@ run_brush_based_collision_program :: () {
     player.height = 1.75;
 
     // Create a visual representation for the player (cylinder approximated as box for now)
-    player_mesh := generate_box(ZERO3, player.radius * 2, player.height, player.radius * 2);
+    player_mesh := create_box(ZERO3, player.radius * 2, player.height, player.radius * 2);
     
     player_indexed_mesh : Indexed_Mesh;
     player_indexed_mesh.indices = player_mesh.indices;
@@ -500,4 +442,39 @@ main :: () {
     run_mesh_based_collision_program();
     // run_brush_based_collision_program();
     // test();
+
+
 }
+
+test_grav_iterative :: () {
+
+    
+    fpmi := First_Person_Movement_Input.{};
+    ground_state := Ground_State.IN_AIR;
+
+    position, velocity : Vector3;
+
+    delta_time := 1.0 / 60;
+
+    for 1..60 {
+        new_velocity := get_new_first_person_velocity(velocity, fpmi, Z3, delta_time, ground_state, Movement_Params.{acceleration_mpss = 20});
+        empirical_acceleration := (new_velocity - velocity) / delta_time;
+        displacement := velocity * delta_time + 0.5 * (empirical_acceleration) * pow(delta_time, 2);
+
+        position += displacement;
+
+        velocity = new_velocity;
+
+        log("it: %, vel: %, pos: %", it, velocity, position);
+    }
+}
+
+
+
+
+
+
+
+
+
+
