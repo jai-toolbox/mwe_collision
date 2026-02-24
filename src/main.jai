@@ -169,7 +169,7 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     swap_buffers(windowed_program_3d.window, false);
 }
 
-do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, cpm_player: *CPMA_Movement_Player, map: Collision_Geometries, renderables: [] Renderable) {
+do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, cpma_movement: *CPMA_Movement, map: Collision_Geometries, renderables: [] Renderable) {
 
 
 
@@ -177,7 +177,7 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
 
 
 
-    update(cpm_player, *windowed_program_3d.camera, *map, delta_time);
+    update(cpma_movement, *windowed_program_3d.camera, *map, delta_time);
 
 
     glUseProgram(windowed_program_3d.camera_per_object_transform_color_renderer.shader_program_gl_handle);
@@ -276,7 +276,7 @@ run_mesh_based_collision_program :: () {
     velocity : Vector3;
     on_ground : bool;
 
-    cpma_movement_player : CPMA_Movement_Player;
+    cpma_movement : CPMA_Movement;
 
     renderables : [..] Renderable;
     
@@ -307,7 +307,7 @@ run_mesh_based_collision_program :: () {
 
         if (windowed_program_3d.current_menu == .NONE) {
             // do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
-            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *cpma_movement_player, map, renderables);
+            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *cpma_movement, map, renderables);
             context.simp.current_shader = null; 
         } else {
             context.simp.current_shader = null;
