@@ -172,15 +172,19 @@ render_speed :: (using wp : *Windowed_Program, vel: Vector3) {
     label(r_vel, tprint("% m/s (h)", formatFloat(length(horizontal_vel), trailing_width=2, zero_removal=.NO)), *label_theme);
 }
 
-do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, cpma_movement: *CPMA_Movement, velocity: *Vector3, map: Collision_Geometries, renderables: [] Renderable) {
+do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, movement_state: *CPMA_Movement_State, velocity: *Vector3, on_ground: *bool, map: Collision_Geometries, renderables: [] Renderable) {
 
 
 
     for renderables queue_render(*windowed_program_3d.camera_per_object_transform_color_renderer, it.render_object_index);
 
 
+    update(movement_state, *windowed_program_3d.camera.position, velocity, on_ground, get_forward(*windowed_program_3d.camera), *map, delta_time);
 
-    update(cpma_movement, *windowed_program_3d.camera.position, velocity, get_forward(*windowed_program_3d.camera), *map, delta_time);
+    // displacement := velocity.* * delta_time;
+
+    // ellipsoid_radius := Vector3.{0.4, 1.75 / 2.0, 0.4};
+    // resolve_collisions_against_body_ellipsoid(*map, ellipsoid_radius, *windowed_program_3d.camera.position, *displacement, on_ground);
 
 
     glUseProgram(windowed_program_3d.camera_per_object_transform_color_renderer.shader_program_gl_handle);
@@ -234,6 +238,8 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
             arrow_itpc := create_itpc_with_color(arrow_geom, dial_color);
             immediate_render(*windowed_program_3d.absolute_position_color_renderer, arrow_itpc.indices, arrow_itpc.positions, arrow_itpc.rgb_colors);
         }
+
+        // todo also add the velocity to the dial, we want to use colors for this, where we go through a color spectrum, this allows people to get how fast they're going.
 
         // mouse dial
         mouse_dial_center := Vector2.{0.9, -0.8};
@@ -345,7 +351,7 @@ run_mesh_based_collision_program :: () {
     velocity : Vector3;
     on_ground : bool;
 
-    cpma_movement : CPMA_Movement;
+    movement_state : CPMA_Movement_State;
 
     renderables : [..] Renderable;
     
@@ -381,7 +387,7 @@ run_mesh_based_collision_program :: () {
 
         if (windowed_program_3d.current_menu == .NONE) {
             // do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
-            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *cpma_movement, *velocity, map, renderables);
+            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *movement_state, *velocity, *on_ground, map, renderables);
             context.simp.current_shader = null; 
         } else {
             context.simp.current_shader = null;
