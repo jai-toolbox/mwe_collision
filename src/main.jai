@@ -1,13 +1,3 @@
-/*
-
-next step is to add a default crosshair, this can be a texture in the middle I guess or geometry i"m not sure yet.
-
-we also need to be able to go fullscreen so these hud elements are large and also figure out why the aspect ratio is messed up.
-
-then I also want a movement dial so we can see our current velocity in tandem with our inptu vector and also show the full velocity
-
-*/
-
 #import "tbx/model_loading";
 #import "tbx/geometry";
 #import "tbx/opengl";
@@ -16,6 +6,7 @@ then I also want a movement dial so we can see our current velocity in tandem wi
 #import "tbx/collision";
 #import "tbx/math";
 #import "tbx/engine";
+#import "tbx/rectangle";
 #import "tbx/physics";
 
 #import "tbx/section_logger";
@@ -28,7 +19,6 @@ then I also want a movement dial so we can see our current velocity in tandem wi
 #import "Window_Creation";
 #import "GetRect";
 
-#load "cpma.jai";
 
 Simp :: #import "Simp";
 using,except(Shader) Simp;
@@ -169,7 +159,20 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     swap_buffers(windowed_program_3d.window, false);
 }
 
-do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, cpma_movement: *CPMA_Movement, map: Collision_Geometries, renderables: [] Renderable) {
+
+render_speed :: (using wp : *Windowed_Program, vel: Vector3) {
+    label_theme := my_theme.label_theme;
+    rect_height := 0.1;
+    rect_width := 0.4;
+    r_vel := get_rect_normalized(create_rectangle(-1, 1 - rect_height, rect_width, rect_height, .TOP_LEFT), xx window_width, xx window_height);
+
+    horizontal_vel := vel;
+    horizontal_vel.y = 0;
+
+    label(r_vel, tprint("% m/s (h)", formatFloat(length(horizontal_vel), trailing_width=2, zero_removal=.NO)), *label_theme);
+}
+
+do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, cpma_movement: *CPMA_Movement, velocity: *Vector3, map: Collision_Geometries, renderables: [] Renderable) {
 
 
 
@@ -177,7 +180,7 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
 
 
 
-    update(cpma_movement, *windowed_program_3d.camera, *map, delta_time);
+    update(cpma_movement, *windowed_program_3d.camera.position, velocity, get_forward(*windowed_program_3d.camera), *map, delta_time);
 
 
     glUseProgram(windowed_program_3d.camera_per_object_transform_color_renderer.shader_program_gl_handle);
@@ -192,8 +195,74 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
 
     render(*windowed_program_3d.camera_per_object_transform_color_renderer);
 
+    ctx := context;
+    ctx.allocator = temp;
+
+    push_context ctx {
+
+        // crosshair
+        raw_geom := create_annulus(ZERO3, Z3, 0.01, 0.02, 8); // todo assumes -z forward
+        itpc := create_itpc_with_color(raw_geom, .{0.5, 0.8, 0.1});
+        immediate_render(*windowed_program_3d.absolute_position_color_renderer, itpc.indices, itpc.positions, itpc.rgb_colors);
+
+        dial_radius := 0.1;
+        dial_border_thickness := 0.005;
+        dial_color := Vector3.{0.5, 0.8, 0.1};
+
+        // movement dial
+        movement_dial_center := Vector2.{0.65, -0.8};
+        movement_dial_geom := create_annulus(make_vector3(movement_dial_center, 0), Z3, dial_radius - dial_border_thickness, dial_radius, 8);
+        movement_dial_itpc := create_itpc_with_color(movement_dial_geom, dial_color);
+        immediate_render(*windowed_program_3d.absolute_position_color_renderer, movement_dial_itpc.indices, movement_dial_itpc.positions, movement_dial_itpc.rgb_colors);
+
+        // movement input arrow
+        forward : float = 0.0;
+        right   : float = 0.0;
+        if is_key_down(xx #char "W") forward += 1.0;
+        if is_key_down(xx #char "S") forward -= 1.0;
+        if is_key_down(xx #char "D") right   += 1.0;
+        if is_key_down(xx #char "A") right   -= 1.0;
+
+        input_dir := Vector2.{right, forward};
+        input_len := length(input_dir);
+
+        if input_len > 0.001 {
+            normalized_dir := input_dir / input_len;
+            clamped_len := min(input_len, 1.0);
+            arrow_tip := movement_dial_center + normalized_dir * clamped_len * (dial_radius - dial_border_thickness);
+            arrow_geom := create_2d_arrow(movement_dial_center, arrow_tip, 0.008);
+            arrow_itpc := create_itpc_with_color(arrow_geom, dial_color);
+            immediate_render(*windowed_program_3d.absolute_position_color_renderer, arrow_itpc.indices, arrow_itpc.positions, arrow_itpc.rgb_colors);
+        }
+
+        // mouse dial
+        mouse_dial_center := Vector2.{0.9, -0.8};
+        mouse_dial_geom := create_annulus(make_vector3(mouse_dial_center, 0), Z3, dial_radius - dial_border_thickness, dial_radius, 8);
+        mouse_dial_itpc := create_itpc_with_color(mouse_dial_geom, dial_color);
+        immediate_render(*windowed_program_3d.absolute_position_color_renderer, mouse_dial_itpc.indices, mouse_dial_itpc.positions, mouse_dial_itpc.rgb_colors);
+
+        // mouse delta arrow
+        mouse_sensitivity_scale :: 10.0;
+        mouse_dir := Vector2.{
+            cast(float) windowed_program_3d.last_mouse_delta_x / mouse_sensitivity_scale,
+           -cast(float) windowed_program_3d.last_mouse_delta_y / mouse_sensitivity_scale  // negate y: screen delta down is positive, but up should be positive on dial
+        };
+        mouse_len := length(mouse_dir);
+
+        if mouse_len > 0.001 {
+            normalized_mouse := mouse_dir / mouse_len;
+            clamped_mouse_len := min(mouse_len, 1.0);
+            mouse_arrow_tip := mouse_dial_center + normalized_mouse * clamped_mouse_len * (dial_radius - dial_border_thickness);
+            mouse_arrow_geom := create_2d_arrow(mouse_dial_center, mouse_arrow_tip, 0.008);
+            mouse_arrow_itpc := create_itpc_with_color(mouse_arrow_geom, dial_color);
+            immediate_render(*windowed_program_3d.absolute_position_color_renderer, mouse_arrow_itpc.indices, mouse_arrow_itpc.positions, mouse_arrow_itpc.rgb_colors);
+        }
+
+    }
+
     context.simp.current_shader = null;
     render_tick_stats(windowed_program_3d);
+    render_speed(windowed_program_3d, velocity);
     render_camera_stats(windowed_program_3d);
     render_iteration(windowed_program_3d);
 
@@ -305,9 +374,14 @@ run_mesh_based_collision_program :: () {
         per_frame_update(*windowed_program_3d);
 
 
+        glUseProgram(windowed_program_3d.absolute_position_color_renderer.shader_program_gl_handle);
+        set_aspect_ratio_uniform(*windowed_program_3d.absolute_position_color_renderer, .{xx windowed_program_3d.window_width, xx windowed_program_3d.window_height});
+        glUseProgram(0);
+
+
         if (windowed_program_3d.current_menu == .NONE) {
             // do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
-            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *cpma_movement, map, renderables);
+            do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *cpma_movement, *velocity, map, renderables);
             context.simp.current_shader = null; 
         } else {
             context.simp.current_shader = null;
@@ -393,14 +467,14 @@ run_brush_based_collision_program :: () {
 
     windowed_program_3d.camera.position = Y3 * 30;
 
-    // Create renderable for the map geometry
+    // create renderable for the map geometry
     renderables : [..] Renderable;
     
     renderable: Renderable;
     renderable.indexed_mesh.indices = map_mesh.indices;
     renderable.indexed_mesh.positions = map_mesh.positions;
     
-    // Generate colors for the map mesh
+    // generate colors for the map mesh
     for 1..renderable.indexed_mesh.positions.count {
         array_add(*renderable.indexed_mesh.rgb_colors, .{random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()});  // Gray color
     }
