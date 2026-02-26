@@ -1,3 +1,13 @@
+/*
+
+so we still occasionally get slow frames, this should not be happening in such a simple project.
+
+From what I can tell this is occurring because of slow gpu or something which doesn't make too much
+sense yet, it would be good to get a breakdown with nsight graphics to truly figure this out soon.
+
+*/
+
+
 #import "tbx/model_loading";
 #import "tbx/geometry";
 #import "tbx/opengl";
@@ -9,7 +19,7 @@
 #import "tbx/rectangle";
 #import "tbx/physics";
 
-#import "tbx/section_logger";
+#import "tbx/section_logger"()(false);
 
 #import "Basic";
 #import "GL";
@@ -121,14 +131,8 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     old_velocity := velocity.*;
     new_velocity : Vector3;
     if (movement_mode == .FPS) {
-        fpmi := First_Person_Movement_Input.{
-            is_key_down (xx #char "W"),
-            is_key_down (xx #char "S"),
-            is_key_down (xx #char "D"),
-            is_key_down (xx #char "A"),
-            is_key_down (xx #char " "),
-        }; 
 
+        fpmi := sample_first_person_movement_input();
         ground_state : Ground_State = ifx on_ground.* then .ON_GROUND else .IN_AIR;
 
         new_velocity = get_new_first_person_velocity(velocity.*, fpmi, get_forward(*windowed_program_3d.camera), delta_time, ground_state, Movement_Params.{acceleration_mpss = 20});
@@ -174,18 +178,26 @@ render_speed :: (using wp : *Windowed_Program, vel: Vector3) {
 
 do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delta_time: float, movement_state: *CPMA_Movement_State, velocity: *Vector3, on_ground: *bool, map: Collision_Geometries, renderables: [] Renderable) {
 
+    slog_scoped("do_collision_simulation_cpma");
 
+    slog_start("0");
 
     for renderables queue_render(*windowed_program_3d.camera_per_object_transform_color_renderer, it.render_object_index);
 
+    slog_end("0");
+    slog_start("1");
 
-    update(movement_state, *windowed_program_3d.camera.position, velocity, on_ground, get_forward(*windowed_program_3d.camera), *map, delta_time);
+    fpmi := sample_first_person_movement_input();
+
+    update(movement_state, fpmi, *windowed_program_3d.camera.position, velocity, on_ground, get_forward(*windowed_program_3d.camera), *map, delta_time);
 
     // displacement := velocity.* * delta_time;
 
     // ellipsoid_radius := Vector3.{0.4, 1.75 / 2.0, 0.4};
     // resolve_collisions_against_body_ellipsoid(*map, ellipsoid_radius, *windowed_program_3d.camera.position, *displacement, on_ground);
 
+    slog_end("1");
+    slog_start("2");
 
     glUseProgram(windowed_program_3d.camera_per_object_transform_color_renderer.shader_program_gl_handle);
 
@@ -197,10 +209,16 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
     glEnable(GL_DEPTH_TEST);
     glClear(GL_DEPTH_BUFFER_BIT);
 
+    slog_end("2");
+    slog_start("3");
+
     render(*windowed_program_3d.camera_per_object_transform_color_renderer);
 
     ctx := context;
     ctx.allocator = temp;
+
+    slog_end("3");
+    slog_start("4");
 
     push_context ctx {
 
@@ -266,13 +284,43 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
 
     }
 
+    slog_end("4");
+    slog_start("5");
+
+
+    slog_start("5.1");
+
     context.simp.current_shader = null;
+
+    slog_end("5.1");
+    slog_start("5.2");
+
     render_tick_stats(windowed_program_3d);
+
+    slog_end("5.2");
+    slog_start("5.3");
+
     render_speed(windowed_program_3d, velocity);
+
+    slog_end("5.3");
+    slog_start("5.4");
+
     render_camera_stats(windowed_program_3d);
+
+    slog_end("5.4");
+    slog_start("5.5");
+
     render_iteration(windowed_program_3d);
 
+    slog_end("5.5");
+
+    slog_end("5");
+    slog_start("6");
+
     swap_buffers(windowed_program_3d.window, false);
+
+    slog_end("6");
+    slog_start("7");
 
     // We call glFinish() here to force the GPU to complete all queued work at a predictable point
     // in the frame. Without this, the GPU gradually falls behind the CPU over ~30 seconds (~4250
@@ -294,7 +342,10 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
     // only creates a borderless fullscreen window, which still composites through DWM.
     // Exclusive fullscreen is impractical during development due to slow alt-tabbing and crash
     // recovery issues, so glFinish() is the pragmatic solution for now.
-    glFinish();
+    // glFinish();
+
+    slog_end("7");
+
 }
 
 run_mesh_based_collision_program :: () {
@@ -370,34 +421,51 @@ run_mesh_based_collision_program :: () {
     quit := false;
     while !windowed_program_3d.end_program {
 
+        slog_scoped("tick");
+
+        slog("iter: %", windowed_program_3d.iteration);
+
+        slog_start("0");
+
         mark_frame_start(*windowed_program_3d);
-
-
 
         if is_key_just_pressed(xx #char "M")
             toggle_menu(*windowed_program_3d);
 
         per_frame_update(*windowed_program_3d);
 
+        slog_end("0");
+
+        slog_start("1");
+
 
         glUseProgram(windowed_program_3d.absolute_position_color_renderer.shader_program_gl_handle);
         set_aspect_ratio_uniform(*windowed_program_3d.absolute_position_color_renderer, .{xx windowed_program_3d.window_width, xx windowed_program_3d.window_height});
         glUseProgram(0);
 
+        slog_end("1");
+
+
 
         if (windowed_program_3d.current_menu == .NONE) {
+            slog_start("2");
             // do_collision_simulation(*windowed_program_3d, windowed_program_3d.delta_time, *velocity, *on_ground, *character, map, renderables, movement_mode);
             do_collision_simulation_cpma(*windowed_program_3d, windowed_program_3d.delta_time, *movement_state, *velocity, *on_ground, map, renderables);
             context.simp.current_shader = null; 
+            slog_end("2");
         } else {
+            slog_start("3");
             context.simp.current_shader = null;
             clear_render_target(.35, .35, .35, 1);
             render_menus(*windowed_program_3d.wp);
             // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
             swap_buffers(windowed_program_3d.window, false);
+            slog_end("3");
         }
 
+        slog_start("4");
         sleep_to_maintain_max_fps(*windowed_program_3d);
+        slog_end("4");
 
         mark_frame_end(*windowed_program_3d);
     }
