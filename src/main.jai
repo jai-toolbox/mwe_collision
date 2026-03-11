@@ -2,8 +2,11 @@
 
 so we still occasionally get slow frames, this should not be happening in such a simple project.
 
-From what I can tell this is occurring because of slow gpu or something which doesn't make too much
-sense yet, it would be good to get a breakdown with nsight graphics to truly figure this out soon.
+after looking at the program through intel gpa it seems like its dwm that's being slow and it's not really my fault.
+
+When I do exclusive fullscreen it seems to work better, less slow frames compared to before so that's good. 
+
+At the same time it should run ok in windowed mode and slightly frustrated that it doesn't, I guess we can cook up a mwe at some point.
 
 */
 
@@ -18,8 +21,10 @@ sense yet, it would be good to get a breakdown with nsight graphics to truly fig
 #import "tbx/engine";
 #import "tbx/rectangle";
 #import "tbx/physics";
+#import "tbx/time";
 
 #import "tbx/section_logger"()(false);
+// #import "tbx/section_logger";
 
 #import "Basic";
 #import "GL";
@@ -159,6 +164,7 @@ do_collision_simulation :: (windowed_program_3d : *Windowed_Program_3D, delta_ti
     context.simp.current_shader = null;
     render_tick_stats(windowed_program_3d);
     render_camera_stats(windowed_program_3d);
+    render_performance_graph(windowed_program_3d);
 
     swap_buffers(windowed_program_3d.window, false);
 }
@@ -296,6 +302,7 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
     slog_start("5.2");
 
     render_tick_stats(windowed_program_3d);
+    render_performance_graph(windowed_program_3d);
 
     slog_end("5.2");
     slog_start("5.3");
@@ -342,7 +349,7 @@ do_collision_simulation_cpma :: (windowed_program_3d: *Windowed_Program_3D, delt
     // only creates a borderless fullscreen window, which still composites through DWM.
     // Exclusive fullscreen is impractical during development due to slow alt-tabbing and crash
     // recovery issues, so glFinish() is the pragmatic solution for now.
-    // glFinish();
+    glFinish();
 
     slog_end("7");
 
@@ -421,6 +428,8 @@ run_mesh_based_collision_program :: () {
     quit := false;
     while !windowed_program_3d.end_program {
 
+
+
         slog_scoped("tick");
 
         slog("iter: %", windowed_program_3d.iteration);
@@ -428,6 +437,8 @@ run_mesh_based_collision_program :: () {
         slog_start("0");
 
         mark_frame_start(*windowed_program_3d);
+
+        start_section(*windowed_program_3d.section_timer, "tick");
 
         if is_key_just_pressed(xx #char "M")
             toggle_menu(*windowed_program_3d);
@@ -467,196 +478,9 @@ run_mesh_based_collision_program :: () {
         sleep_to_maintain_max_fps(*windowed_program_3d);
         slog_end("4");
 
-        mark_frame_end(*windowed_program_3d);
-    }
-}
 
-// this code is not being maintained rn
-run_brush_based_collision_program :: () {
-    windowed_program_3d : Windowed_Program_3D;
-    windowed_program_3d.movement_mode = .MANUAL;
-    windowed_program_3d.camera_mode = .THIRD_PERSON;
-    windowed_program_3d.window_width = 1280;
-    windowed_program_3d.window_height = 720;
-    windowed_program_3d.window_name = "mwe_collision";
+        end_section(*windowed_program_3d.section_timer, "tick");
 
-    init(*windowed_program_3d);
-
-    map_content, success_read := read_entire_file("data/lair.map");
-    if !success_read {
-        log_error("Failed to read map file");
-        return;
-    }
-    
-    map, success := parse_map(map_content, .Y_UP, 0.05);
-    if !success {
-        log_error("Failed to parse map file");
-        return;
-    }
-
-    // verifying normals
-    for * entity : map.entities {
-        for brush_idx : 0..entity.brushes.count-1 {
-            brush := *entity.brushes[brush_idx];
-            print("Brush %:\n", brush_idx);
-            for plane_idx : 0..brush.planes.count-1 {
-                plane := brush.planes[plane_idx];
-                print("  Plane %: normal=(%, %, %) d=%\n", 
-                      plane_idx, plane.normal.x, plane.normal.y, plane.normal.z, plane.d);
-            }
-        }
-    }
-
-    // convert map brushes to renderable mesh
-    map_mesh := map_to_mesh_deduplicated(*map);
-
-    movement_mode := Movement_Mode.GOD;
-
-    // Create player using the new Player struct
-    player : Player;
-    player.position = .{ 0, 100, 0 };  // Start position (Y is up now, was {0, 0, 100})
-    player.velocity = .{ 0, 0, 0 };
-    player.radius = 0.2;   // Half of the old 0.4 width
-    player.height = 1.75;
-
-    // Create a visual representation for the player (cylinder approximated as box for now)
-    player_mesh := create_box(ZERO3, player.radius * 2, player.height, player.radius * 2);
-    
-    player_indexed_mesh : Indexed_Mesh;
-    player_indexed_mesh.indices = player_mesh.indices;
-    player_indexed_mesh.positions = player_mesh.positions;
-    
-    player_local_to_world_indices : [..] u32;
-    for 1..player_indexed_mesh.positions.count {
-        array_add(*player_indexed_mesh.rgb_colors, .{random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()});
-    }
-
-    // player_render_object_index := buffer_object(
-    //     *windowed_program_3d.camera_per_object_transform_color_renderer, 
-    //     player_indexed_mesh.indices, 
-    //     player_local_to_world_indices, 
-    //     player_indexed_mesh.positions, 
-    //     player_indexed_mesh.rgb_colors
-    // );
-
-    windowed_program_3d.camera.position = Y3 * 30;
-
-    // create renderable for the map geometry
-    renderables : [..] Renderable;
-    
-    renderable: Renderable;
-    renderable.indexed_mesh.indices = map_mesh.indices;
-    renderable.indexed_mesh.positions = map_mesh.positions;
-    
-    // generate colors for the map mesh
-    for 1..renderable.indexed_mesh.positions.count {
-        array_add(*renderable.indexed_mesh.rgb_colors, .{random_get_zero_to_one(), random_get_zero_to_one(), random_get_zero_to_one()});  // Gray color
-    }
-    
-    renderable.render_object_index, renderable.local_to_world_index = buffer_object(
-        *windowed_program_3d.camera_per_object_transform_color_renderer, 
-        renderable.indexed_mesh.indices, 
-        renderable.indexed_mesh.positions, 
-        renderable.indexed_mesh.rgb_colors
-    );
-    
-    array_add(*renderables, renderable);
-
-    quit := false;
-    while !windowed_program_3d.end_program {
-
-        mark_frame_start(*windowed_program_3d);
-
-        Input.update_window_events();
-        for Input.events_this_frame {
-            if it.type == .QUIT then quit = true;
-
-            getrect_handle_event(it);
-
-            if it.type == {
-              case .KEYBOARD;
-                if it.key_pressed && it.key_code == .ESCAPE {
-                    quit = true;
-                }
-            }
-        }
-
-        if is_key_just_pressed(xx #char "M")
-            toggle_menu(*windowed_program_3d);
-    
-        for Input.get_window_resizes() {
-            Simp.update_window(it.window);  
-            if it.window == windowed_program_3d.window {
-                should_reinit := (it.width != windowed_program_3d.window_width) || (it.height != windowed_program_3d.window_height);
-
-                windowed_program_3d.window_width  = it.width;
-                windowed_program_3d.window_height = it.height;
-            }
-        }
-
-        per_frame_update(*windowed_program_3d);
-
-        if (windowed_program_3d.current_menu == .NONE) {
-
-
-            gmi := God_Mode_Input.{
-                is_key_down (xx #char "E"),
-                is_key_down (xx #char "Q"),
-                is_key_down (xx #char "W"),
-                is_key_down (xx #char "S"),
-                is_key_down (xx #char "D"),
-                is_key_down (xx #char "A"),
-                is_key_down (xx #char " "),
-                is_key_down (Input.Key_Code.SHIFT),
-            }; 
-
-            player.velocity = get_new_god_mode_velocity(player.velocity, get_forward(*windowed_program_3d.camera), gmi, windowed_program_3d.delta_time);
-            
-            player.position += player.velocity * windowed_program_3d.delta_time;
-
-            if !is_key_down( xx #char "C") {
-                update_player(*player, *map, windowed_program_3d.delta_time);
-            }
-            
-            player_transform := make_translation_matrix4(player.position);
-
-            // player_transform._24 -= player.height / 2;
-            
-            // this moves the character to the camera's position
-            // windowed_program_3d.camera_per_object_transform_color_renderer.local_to_world_matrices[0] = make_translation_matrix4(player.position);
-
-            // queue_render(*windowed_program_3d.camera_per_object_transform_color_renderer, player_render_object_index);
-            
-            
-            windowed_program_3d.camera.position = player.position;
-            
-            // this is just the map 
-            for renderables queue_render(*windowed_program_3d.camera_per_object_transform_color_renderer, it.render_object_index);
-            
-            clear_render_target(.35, .35, .35, 1);  // Or whatever background color you want
-
-            glDepthMask (GL_TRUE);
-            glEnable (GL_DEPTH_TEST);
-
-            glClear (GL_DEPTH_BUFFER_BIT);
-
-            render(*windowed_program_3d.camera_per_object_transform_color_renderer);
-
-            context.simp.current_shader = null;
-            render_tick_stats(windowed_program_3d);
-
-            // swap_buffers(windowed_program_3d.window, windowed_program_3d.vsync);
-            swap_buffers(windowed_program_3d.window, false);
-
-
-        } else {
-            context.simp.current_shader = null;
-            clear_render_target(.35, .35, .35, 1);
-            render_menus(*windowed_program_3d.wp);
-            swap_buffers(windowed_program_3d.window, false);
-        }
-
-        sleep_to_maintain_max_fps(*windowed_program_3d);
         mark_frame_end(*windowed_program_3d);
     }
 }
